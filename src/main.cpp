@@ -22,6 +22,9 @@ const int mapHeight = tileSize * 38;
 
 SDL_Texture *lightningTowerTexture = nullptr; // Declare a global or static variable
 
+const int LIGHTNING_TOWER_WIDTH = 2;  // Width in tiles
+const int LIGHTNING_TOWER_HEIGHT = 2; // Height in tiles
+
 struct TextureSingular
 {
     SDL_Texture *texture;
@@ -64,9 +67,18 @@ void GenerateEnvironment()
     const int ROCK_3 = 6;
 
     // Hard-code the lightning tower placement at the center of the map
-    const int towerX = gridWidth / 2; // Centered horizontally
-    const int towerY = gridHeight / 2; // Centered vertically
-    mapGrid[towerY][towerX] = LIGHTNING_TOWER;
+    const int towerX = gridWidth / 2 - LIGHTNING_TOWER_WIDTH / 2; // Centered horizontally
+    const int towerY = gridHeight / 2 - LIGHTNING_TOWER_HEIGHT / 2; // Centered vertically
+
+    for (int y = 0; y < LIGHTNING_TOWER_HEIGHT; ++y)
+    {
+        for (int x = 0; x < LIGHTNING_TOWER_WIDTH; ++x)
+        {
+            mapGrid[towerY + y][towerX + x] = LIGHTNING_TOWER;
+        }
+    }
+
+    SDL_Log("Lightning tower placed at (%d, %d) with size (%d x %d tiles)", towerX, towerY, LIGHTNING_TOWER_WIDTH, LIGHTNING_TOWER_HEIGHT);
 
     // Generate a stone path leading to the tower from the left
     for (int x = 0; x <= towerX; ++x)
@@ -87,7 +99,7 @@ void GenerateEnvironment()
         int rockY = std::rand() % gridHeight;
 
         // Ensure rocks do not overwrite the lightning tower or paths
-        if (mapGrid[rockY][rockX] == 0)
+        if (mapGrid[rockY][rockX] == 0) // Check for empty tiles only
         {
             int rockType = ROCK_1 + (std::rand() % 3); // Randomly select ROCK_1, ROCK_2, or ROCK_3
             mapGrid[rockY][rockX] = rockType;
@@ -112,6 +124,13 @@ void GenerateEnvironment()
         for (int x = 0; x < gridWidth; ++x)
         {
             SDL_Texture *texture = nullptr;
+
+            // Skip adding individual tiles for the lightning tower
+            if (mapGrid[y][x] == LIGHTNING_TOWER)
+            {
+                continue; // Skip this tile
+            }
+
             switch (mapGrid[y][x])
             {
             case GRASS_1:
@@ -122,13 +141,6 @@ void GenerateEnvironment()
                 break;
             case STONE_PATH:
                 texture = IMG_LoadTexture(renderer, textureFiles[2]);
-                break;
-            case LIGHTNING_TOWER:
-                texture = IMG_LoadTexture(renderer, textureFiles[3]);
-                if (texture)
-                {
-                    lightningTowerTexture = texture; // Store the lightning tower texture
-                }
                 break;
             case ROCK_1:
                 texture = IMG_LoadTexture(renderer, textureFiles[4]);
@@ -150,6 +162,18 @@ void GenerateEnvironment()
             SDL_Rect position = {x * tileSize, y * tileSize, tileSize, tileSize};
             texturesPlural.push_back({texture, position});
         }
+    }
+
+    // Add the lightning tower as a single large texture
+    lightningTowerTexture = IMG_LoadTexture(renderer, textureFiles[3]);
+    if (!lightningTowerTexture)
+    {
+        SDL_Log("Failed to load lightning tower texture: %s\n", SDL_GetError());
+    }
+    else
+    {
+        SDL_Rect towerPosition = {towerX * tileSize, towerY * tileSize, LIGHTNING_TOWER_WIDTH * tileSize, LIGHTNING_TOWER_HEIGHT * tileSize};
+        texturesPlural.push_back({lightningTowerTexture, towerPosition});
     }
 }
 
@@ -225,8 +249,12 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     {
         if (texInfo.texture == lightningTowerTexture)
         {
-            SDL_FRect fPosition = {static_cast<float>(texInfo.position.x), static_cast<float>(texInfo.position.y), 
-                                   static_cast<float>(texInfo.position.w), static_cast<float>(texInfo.position.h)};
+            SDL_FRect fPosition = {
+                static_cast<float>(texInfo.position.x),
+                static_cast<float>(texInfo.position.y),
+                static_cast<float>(LIGHTNING_TOWER_WIDTH * tileSize), // Adjust width
+                static_cast<float>(LIGHTNING_TOWER_HEIGHT * tileSize) // Adjust height
+            };
             SDL_RenderTexture(renderer, texInfo.texture, NULL, &fPosition);
         }
     }
