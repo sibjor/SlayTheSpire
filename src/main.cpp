@@ -20,6 +20,8 @@ const float padding = 2.0f; // Padding between tiles
 const int mapWidth = tileSize * 50;
 const int mapHeight = tileSize * 38;
 
+SDL_Texture *lightningTowerTexture = nullptr; // Declare a global or static variable
+
 struct TextureSingular
 {
     SDL_Texture *texture;
@@ -34,6 +36,9 @@ std::vector<const char *> textureFiles = {
     "build/build-client/Debug/assets/Simple Tower Defense/Environment/Grass/spr_grass_02.png",
     "build/build-client/Debug/assets/Simple Tower Defense/Environment/Tile Set/spr_tile_set_stone.png",
     "build/build-client/Debug/assets/Simple Tower Defense/Towers/Combat Towers/spr_tower_lightning_tower.png",
+    "build/build-client/Debug/assets/Simple Tower Defense/Environment/Decoration/spr_rock_01.png",
+    "build/build-client/Debug/assets/Simple Tower Defense/Environment/Decoration/spr_rock_02.png",
+    "build/build-client/Debug/assets/Simple Tower Defense/Environment/Decoration/spr_rock_03.png",
     // Add more file paths as needed
 };
 
@@ -54,20 +59,39 @@ void GenerateEnvironment()
     const int GRASS_2 = 1;
     const int STONE_PATH = 2;
     const int LIGHTNING_TOWER = 3;
+    const int ROCK_1 = 4;
+    const int ROCK_2 = 5;
+    const int ROCK_3 = 6;
 
-    // Place the lightning tower
-    int towerX = gridWidth / 2; // Centered horizontally
-    int towerY = gridHeight / 2; // Centered vertically
+    // Hard-code the lightning tower placement at the center of the map
+    const int towerX = gridWidth / 2; // Centered horizontally
+    const int towerY = gridHeight / 2; // Centered vertically
     mapGrid[towerY][towerX] = LIGHTNING_TOWER;
 
-    // Generate two paths leading to the tower
-    for (int x = 0; x <= towerX; ++x) // Path from the left
+    // Generate a stone path leading to the tower from the left
+    for (int x = 0; x <= towerX; ++x)
     {
         mapGrid[towerY][x] = STONE_PATH;
     }
-    for (int y = gridHeight - 1; y >= towerY; --y) // Path from the bottom
+
+    // Generate a stone path leading to the tower from the bottom
+    for (int y = gridHeight - 1; y >= towerY; --y)
     {
         mapGrid[y][towerX] = STONE_PATH;
+    }
+
+    // Procedurally place rocks at random positions
+    for (int i = 0; i < 10; ++i) // Place 10 rocks
+    {
+        int rockX = std::rand() % gridWidth;
+        int rockY = std::rand() % gridHeight;
+
+        // Ensure rocks do not overwrite the lightning tower or paths
+        if (mapGrid[rockY][rockX] == 0)
+        {
+            int rockType = ROCK_1 + (std::rand() % 3); // Randomly select ROCK_1, ROCK_2, or ROCK_3
+            mapGrid[rockY][rockX] = rockType;
+        }
     }
 
     // Populate the rest of the map with grass textures
@@ -101,6 +125,19 @@ void GenerateEnvironment()
                 break;
             case LIGHTNING_TOWER:
                 texture = IMG_LoadTexture(renderer, textureFiles[3]);
+                if (texture)
+                {
+                    lightningTowerTexture = texture; // Store the lightning tower texture
+                }
+                break;
+            case ROCK_1:
+                texture = IMG_LoadTexture(renderer, textureFiles[4]);
+                break;
+            case ROCK_2:
+                texture = IMG_LoadTexture(renderer, textureFiles[5]);
+                break;
+            case ROCK_3:
+                texture = IMG_LoadTexture(renderer, textureFiles[6]);
                 break;
             }
 
@@ -114,6 +151,20 @@ void GenerateEnvironment()
             texturesPlural.push_back({texture, position});
         }
     }
+}
+
+SDL_Texture *LoadTextureWithTransparency(SDL_Renderer *renderer, const char *filePath)
+{
+    SDL_Texture *texture = IMG_LoadTexture(renderer, filePath);
+    if (!texture)
+    {
+        SDL_Log("Failed to load texture: %s\n", SDL_GetError());
+        return nullptr;
+    }
+
+    // Enable blending for transparency
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    return texture;
 }
 
 /* This function runs once at startup. */
@@ -153,13 +204,31 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
 
-    /* Render each texture */
+    /* Render all textures except the lightning tower */
     for (TextureSingular &texInfo : texturesPlural)
     {
+        if (texInfo.texture == nullptr)
+            continue;
+
+        // Skip rendering the lightning tower for now
+        if (texInfo.texture == lightningTowerTexture)
+            continue;
+
         SDL_SetRenderScale(renderer, scale, scale);
         SDL_FRect fPosition = {static_cast<float>(texInfo.position.x), static_cast<float>(texInfo.position.y), 
                                static_cast<float>(texInfo.position.w), static_cast<float>(texInfo.position.h)};
         SDL_RenderTexture(renderer, texInfo.texture, NULL, &fPosition);
+    }
+
+    /* Render the lightning tower last */
+    for (TextureSingular &texInfo : texturesPlural)
+    {
+        if (texInfo.texture == lightningTowerTexture)
+        {
+            SDL_FRect fPosition = {static_cast<float>(texInfo.position.x), static_cast<float>(texInfo.position.y), 
+                                   static_cast<float>(texInfo.position.w), static_cast<float>(texInfo.position.h)};
+            SDL_RenderTexture(renderer, texInfo.texture, NULL, &fPosition);
+        }
     }
 
     /* Present the renderer */
