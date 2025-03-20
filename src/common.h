@@ -9,5 +9,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <random>
+#include <queue>
+#include <cmath>
+#include <algorithm> 
 
 void GenerateEnvironment(std::vector<const char *> textureFiles);

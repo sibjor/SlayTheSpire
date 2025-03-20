@@ -12,6 +12,7 @@
 #define SDL_MAIN_USE_CALLBACKS 1 /* use the callbacks instead of main() for web compatibility */
 #include "common.h"
 
+
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 
@@ -21,14 +22,17 @@ const int mapWidth = tileSize * 50;
 const int mapHeight = tileSize * 38;
 
 SDL_Texture *lightningTowerTexture = nullptr; // Declare a global or static variable
+SDL_Texture *skeletonTexture = nullptr;       // Skeleton texture
 
 const int LIGHTNING_TOWER_WIDTH = 2;  // Width in tiles
 const int LIGHTNING_TOWER_HEIGHT = 2; // Height in tiles
+const int SKELETON_WIDTH = 4;         // Skeleton sprite width in tiles
+const int SKELETON_HEIGHT = 4;        // Skeleton sprite height in tiles
 
 struct TextureSingular
 {
     SDL_Texture *texture;
-    const SDL_Rect position;
+    SDL_Rect position;
 };
 
 std::vector<TextureSingular> texturesPlural;
@@ -42,11 +46,94 @@ std::vector<const char *> textureFiles = {
     "build/build-client/Debug/assets/Simple Tower Defense/Environment/Decoration/spr_rock_01.png",
     "build/build-client/Debug/assets/Simple Tower Defense/Environment/Decoration/spr_rock_02.png",
     "build/build-client/Debug/assets/Simple Tower Defense/Environment/Decoration/spr_rock_03.png",
+    "build/build-client/Debug/assets/Simple Tower Defense/Enemies/spr_skeleton.png",
     // Add more file paths as needed
 };
 
 // Pretty similar to a typedef in C if I remember correctly
 using namespace std;
+
+// Helper structure for A* pathfinding
+struct Node
+{
+    int x, y;
+    float cost, heuristic;
+    Node *parent;
+
+    Node(int x, int y, float cost, float heuristic, Node *parent = nullptr)
+        : x(x), y(y), cost(cost), heuristic(heuristic), parent(parent) {}
+
+    float totalCost() const { return cost + heuristic; }
+
+    bool operator>(const Node &other) const { return totalCost() > other.totalCost(); }
+};
+
+// Function to calculate the heuristic (Manhattan distance)
+float Heuristic(int x1, int y1, int x2, int y2)
+{
+    return std::abs(x1 - x2) + std::abs(y1 - y2);
+}
+
+// Function to find the path using A* algorithm
+std::vector<std::pair<int, int>> FindPath(const std::vector<std::vector<int>> &mapGrid, int startX, int startY, int targetX, int targetY)
+{
+    const int gridWidth = mapGrid[0].size();
+    const int gridHeight = mapGrid.size();
+
+    std::priority_queue<Node, std::vector<Node>, std::greater<Node>> openList;
+    std::vector<std::vector<bool>> closedList(gridHeight, std::vector<bool>(gridWidth, false));
+
+    openList.emplace(startX, startY, 0, Heuristic(startX, startY, targetX, targetY));
+
+    while (!openList.empty())
+    {
+        Node current = openList.top();
+        openList.pop();
+
+        if (current.x == targetX && current.y == targetY)
+        {
+            // Reconstruct the path
+            std::vector<std::pair<int, int>> path;
+            for (Node *node = &current; node != nullptr; node = node->parent)
+            {
+                path.emplace_back(node->x, node->y);
+            }
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+
+        if (closedList[current.y][current.x])
+            continue;
+
+        closedList[current.y][current.x] = true;
+
+        // Check all neighbors
+        const int dx[] = {0, 1, 0, -1};
+        const int dy[] = {-1, 0, 1, 0};
+
+        for (int i = 0; i < 4; ++i)
+        {
+            int nx = current.x + dx[i];
+            int ny = current.y + dy[i];
+
+            if (nx >= 0 && ny >= 0 && nx < gridWidth && ny < gridHeight && !closedList[ny][nx] && mapGrid[ny][nx] != 4 && mapGrid[ny][nx] != 5 && mapGrid[ny][nx] != 6)
+            {
+                float newCost = current.cost + 1;
+                float heuristic = Heuristic(nx, ny, targetX, targetY);
+                openList.emplace(nx, ny, newCost, heuristic, new Node(current));
+            }
+        }
+    }
+
+    return {}; // Return an empty path if no path is found
+}
+
+// Global variables for skeleton movement
+std::vector<std::pair<int, int>> skeletonPath;
+size_t skeletonPathIndex = 0;
+
+// Global variable for the map grid
+std::vector<std::vector<int>> mapGrid;
 
 // Function prototype for GenerateEnvironment
 void GenerateEnvironment()
@@ -54,8 +141,8 @@ void GenerateEnvironment()
     const int gridWidth = mapWidth / tileSize;
     const int gridHeight = mapHeight / tileSize;
 
-    // 2D grid to represent the map
-    std::vector<std::vector<int>> mapGrid(gridHeight, std::vector<int>(gridWidth, 0));
+    // Resize the global map grid
+    mapGrid.resize(gridHeight, std::vector<int>(gridWidth, 0));
 
     // Define tile types
     const int GRASS_1 = 0;
@@ -175,26 +262,18 @@ void GenerateEnvironment()
         SDL_Rect towerPosition = {towerX * tileSize, towerY * tileSize, LIGHTNING_TOWER_WIDTH * tileSize, LIGHTNING_TOWER_HEIGHT * tileSize};
         texturesPlural.push_back({lightningTowerTexture, towerPosition});
     }
-}
 
-SDL_Texture *LoadTextureWithTransparency(SDL_Renderer *renderer, const char *filePath)
-{
-    SDL_Texture *texture = IMG_LoadTexture(renderer, filePath);
-    if (!texture)
+    // Load the skeleton texture
+    skeletonTexture = IMG_LoadTexture(renderer, textureFiles[7]);
+    if (!skeletonTexture)
     {
-        SDL_Log("Failed to load texture: %s\n", SDL_GetError());
-        return nullptr;
+        SDL_Log("Failed to load skeleton texture: %s\n", SDL_GetError());
     }
-
-    // Enable blending for transparency
-    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    return texture;
 }
 
 /* This function runs once at startup. */
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 {
-
     /* Create the window */
     if (!SDL_CreateWindowAndRenderer("EndlessDungeon", mapWidth, mapHeight, SDL_WINDOW_FULLSCREEN, &window, &renderer))
     {
@@ -204,6 +283,17 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 
     /* Load the textures */
     GenerateEnvironment();
+
+    // Calculate the path for the skeleton
+    const int gridWidth = mapWidth / tileSize;
+    const int gridHeight = mapHeight / tileSize;
+    const int startX = 0; // Starting position of the skeleton
+    const int startY = 0;
+    const int targetX = gridWidth / 2; // Center of the map (lightning tower)
+    const int targetY = gridHeight / 2;
+
+    skeletonPath = FindPath(mapGrid, startX, startY, targetX, targetY);
+
     return SDL_APP_CONTINUE;
 }
 
@@ -221,8 +311,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 /* This function runs once per frame, and is the heart of the program. */
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
-    int w = 0, h = 0;
-    const float scale = 1.0f;
+    static SDL_FRect skeletonPosition = {0, 0, SKELETON_WIDTH * tileSize, SKELETON_HEIGHT * tileSize};
+    static float skeletonAngle = 0.0f;
 
     /* Clear the screen */
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -238,10 +328,8 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         if (texInfo.texture == lightningTowerTexture)
             continue;
 
-        SDL_SetRenderScale(renderer, scale, scale);
-        SDL_FRect fPosition = {static_cast<float>(texInfo.position.x), static_cast<float>(texInfo.position.y), 
-                               static_cast<float>(texInfo.position.w), static_cast<float>(texInfo.position.h)};
-        SDL_RenderTexture(renderer, texInfo.texture, NULL, &fPosition);
+        SDL_FRect positionF = {static_cast<float>(texInfo.position.x), static_cast<float>(texInfo.position.y), static_cast<float>(texInfo.position.w), static_cast<float>(texInfo.position.h)};
+        SDL_RenderTexture(renderer, texInfo.texture, NULL, &positionF);
     }
 
     /* Render the lightning tower last */
@@ -249,14 +337,41 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     {
         if (texInfo.texture == lightningTowerTexture)
         {
-            SDL_FRect fPosition = {
-                static_cast<float>(texInfo.position.x),
-                static_cast<float>(texInfo.position.y),
-                static_cast<float>(LIGHTNING_TOWER_WIDTH * tileSize), // Adjust width
-                static_cast<float>(LIGHTNING_TOWER_HEIGHT * tileSize) // Adjust height
-            };
-            SDL_RenderTexture(renderer, texInfo.texture, NULL, &fPosition);
+            SDL_FRect positionF = {static_cast<float>(texInfo.position.x), static_cast<float>(texInfo.position.y), static_cast<float>(texInfo.position.w), static_cast<float>(texInfo.position.h)};
+            SDL_RenderTexture(renderer, texInfo.texture, NULL, &positionF);
         }
+    }
+
+    /* Move the skeleton along the path */
+    if (!skeletonPath.empty() && skeletonPathIndex < skeletonPath.size())
+    {
+        int targetX = skeletonPath[skeletonPathIndex].first * tileSize;
+        int targetY = skeletonPath[skeletonPathIndex].second * tileSize;
+
+        float dx = targetX - skeletonPosition.x;
+        float dy = targetY - skeletonPosition.y;
+        float distance = std::sqrt(dx * dx + dy * dy);
+
+        if (distance < 1.0f)
+        {
+            // Move to the next point in the path
+            skeletonPathIndex++;
+        }
+        else
+        {
+            // Move towards the target
+            skeletonPosition.x += dx / distance;
+            skeletonPosition.y += dy / distance;
+
+            // Update the skeleton's angle
+            skeletonAngle = std::atan2(dy, dx) * 180.0f / M_PI;
+        }
+    }
+
+    /* Render the skeleton */
+    if (skeletonTexture)
+    {
+        SDL_RenderTextureRotated(renderer, skeletonTexture, NULL, &skeletonPosition, skeletonAngle, NULL, SDL_FLIP_NONE);
     }
 
     /* Present the renderer */
@@ -272,6 +387,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     {
         SDL_DestroyTexture(texInfo.texture);
     }
+    SDL_DestroyTexture(skeletonTexture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
 }
